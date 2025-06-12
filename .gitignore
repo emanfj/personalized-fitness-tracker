@@ -1,0 +1,42 @@
+# virtual environment
+fitness-track-env/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Jupyter Notebook checkpoints 
+.ipynb_checkpoints/
+
+# logs
+*.log
+
+# system files
+.DS_Store
+Thumbs.db
+
+# environment files
+.env
+*.env
+
+# IDE/editor config
+.vscode/
+.idea/
+
+# test coverage reports
+htmlcov/
+.coverage
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+
+# compiled C extensions 
+*.so
+
+# Spark temporary files 
+metastore_db/
+derby.log
+spark-warehouse/
