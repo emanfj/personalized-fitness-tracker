@@ -1,5 +1,6 @@
 # virtual environment
 fitness-track-env/
+.conda/
 
 # Python cache files
 __pycache__/
