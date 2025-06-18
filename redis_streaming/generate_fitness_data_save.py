@@ -23,7 +23,7 @@ NUM_USERS         = 300
 DAYS_HISTORY      = 30
 EVENTS_PER_MINUTE = 1           # 60 → per-second
 DEVICE_RANGE      = (1, 3)
-OUTPUT_DIR        = pathlib.Path("data")
+OUTPUT_DIR        = pathlib.Path("../data")
 OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
 
 faker = Faker()
