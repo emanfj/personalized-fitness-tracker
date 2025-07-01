@@ -1,15 +1,17 @@
+# redis_streaming/publish.py
 #!/usr/bin/env python
 """
 Multi-threaded Publisher for Synthetic Fitness Data
 Each stream runs in its own thread, publishing forever in parallel.
 """
+import os
 import threading
 import time
 import random
 import datetime as dt
 import redis
 
-from generate_fitness_data_return import (
+from redis_streaming.return_generated_fitness_data import (
     generate_users,
     generate_devices,
     make_fitness_event,
@@ -19,19 +21,19 @@ from generate_fitness_data_return import (
 )
 
 # ─── configuration ─────────────────────────────────────────────────────────────
-REDIS_HOST        = "localhost"
-REDIS_PORT        = 6379
+REDIS_HOST       = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT       = int(os.getenv("REDIS_PORT", 6379))
 
-STREAM_USERS      = "fitness:users"
-STREAM_DEVICES    = "fitness:devices"
-STREAM_FITNESS    = "fitness:events"
-STREAM_SLEEP      = "fitness:sleep"
-STREAM_NUTRITION  = "fitness:nutrition"
-STREAM_FEEDBACK   = "fitness:feedback"
+STREAM_USERS     = "fitness:users"
+STREAM_DEVICES   = "fitness:devices"
+STREAM_FITNESS   = "fitness:events"
+STREAM_SLEEP     = "fitness:sleep"
+STREAM_NUTRITION = "fitness:nutrition"
+STREAM_FEEDBACK  = "fitness:feedback"
 
-N_USERS           = 100
-DEVICES_PER_USER  = 1
-EVENTS_PER_SEC    = 1
+N_USERS          = 100
+DEVICES_PER_USER = 1
+EVENTS_PER_SEC   = 1
 
 # ─── Redis setup ───────────────────────────────────────────────────────────────
 r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
@@ -40,7 +42,10 @@ def publish_event(stream, payload):
     r.xadd(stream, {k: str(v) for k, v in payload.items()})
 
 # ─── bootstrap users & devices ─────────────────────────────────────────────────
-users_df        = generate_users(num_users=N_USERS)
+users_df, dev_map = (
+    generate_users(num_users=N_USERS),
+    None
+)
 devices_df, dev_map = generate_devices(users_df, device_range=(1, DEVICES_PER_USER))
 
 # publish static streams once
@@ -52,7 +57,6 @@ for rec in devices_df.to_dict("records"):
 
 # ─── threaded loops ────────────────────────────────────────────────────────────
 def fitness_loop():
-    """Publish fitness events every second."""
     user_ids = list(users_df["user_id"])
     while True:
         start = time.time()
@@ -60,11 +64,9 @@ def fitness_loop():
             for _ in range(EVENTS_PER_SEC):
                 ev = make_fitness_event(u, dev_map)
                 publish_event(STREAM_FITNESS, ev)
-        elapsed = time.time() - start
-        time.sleep(0.01)
+        time.sleep(max(0, 1 - (time.time() - start)))
 
 def sleep_loop():
-    """Publish one 1-hour sleep session per user per day."""
     user_ids = list(users_df["user_id"])
     today = dt.datetime.utcnow().date()
     sleep_done = set()
@@ -74,7 +76,6 @@ def sleep_loop():
             today = now.date()
             sleep_done.clear()
         for u in user_ids:
-            # approx 1 per day: 1/86400 chance each second
             if u not in sleep_done and random.random() < 1/86400:
                 ev = make_sleep_event(u, dev_map)
                 publish_event(STREAM_SLEEP, ev)
@@ -82,7 +83,6 @@ def sleep_loop():
         time.sleep(1)
 
 def nutrition_loop():
-    """Publish up to 3 nutrition logs per user per day."""
     user_ids = list(users_df["user_id"])
     today = dt.datetime.utcnow().date()
     counts = {u: 0 for u in user_ids}
@@ -92,7 +92,6 @@ def nutrition_loop():
             today = now.date()
             counts = {u: 0 for u in user_ids}
         for u in user_ids:
-            # approx 3 per day: 3/86400 chance each second
             if counts[u] < 3 and random.random() < 3/86400:
                 ev = make_nutrition_event(u)
                 publish_event(STREAM_NUTRITION, ev)
@@ -100,7 +99,6 @@ def nutrition_loop():
         time.sleep(1)
 
 def feedback_loop():
-    """Publish one feedback event per user at 23:59 UTC."""
     user_ids = list(users_df["user_id"])
     today = dt.datetime.utcnow().date()
     done = set()
@@ -109,28 +107,18 @@ def feedback_loop():
         if now.date() != today:
             today = now.date()
             done.clear()
-        # fire at 23:59 exactly
         if now.hour == 23 and now.minute == 59:
             for u in user_ids:
                 if u not in done:
                     ev = make_feedback_event(u)
                     publish_event(STREAM_FEEDBACK, ev)
                     done.add(u)
-        # sleep 30s to avoid double-firing in the same minute
         time.sleep(30)
 
 # ─── start threads ─────────────────────────────────────────────────────────────
-threads = [
-    threading.Thread(target=fitness_loop,   daemon=True),
-    threading.Thread(target=sleep_loop,     daemon=True),
-    threading.Thread(target=nutrition_loop, daemon=True),
-    threading.Thread(target=feedback_loop,  daemon=True),
-]
-
-for t in threads:
-    t.start()
+for fn in (fitness_loop, sleep_loop, nutrition_loop, feedback_loop):
+    threading.Thread(target=fn, daemon=True).start()
 
 print(f"Running multi-threaded publisher with {N_USERS} users…")
-# keep main thread alive forever
 while True:
     time.sleep(3600)
