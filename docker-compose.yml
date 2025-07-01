@@ -1,5 +1,4 @@
-version: '3.8'
-
+# docker-compose.yml
 services:
   redis:
     image: redis:7
@@ -22,19 +21,28 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: publisher
+    working_dir: /app/redis_streaming
     command: python publish.py
     depends_on:
       - redis
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
 
   storage_writer:
     build:
       context: .
       dockerfile: Dockerfile
     container_name: storage_writer
+    working_dir: /app/redis_streaming
     command: python storage_writer.py
     depends_on:
       - redis
       - mongo
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - MONGO_URI=mongodb://mongo:27017
 
 volumes:
   redis-data:

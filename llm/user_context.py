@@ -1,39 +1,61 @@
-# user_context.py
+# llm/user_context.py
 
-import json
-import redis
+from datetime import datetime, timezone, timedelta
 from pymongo import MongoClient
-from datetime import datetime, timedelta
 
-redis_client = redis.Redis(host="localhost", port=6379, db=0)
-mongo       = MongoClient("mongodb://localhost:27017").fitness_tracker
+# connect once at import time
+client = MongoClient("mongodb://localhost:27017")
+db     = client.fitness_tracker
 
-def load_user_context(user_id: str) -> dict:
-    cache_key = f"user_ctx:{user_id}"
-    cached = redis_client.get(cache_key)
-    if cached:
-        return json.loads(cached)
+def build_context(user_id: str) -> dict | None:
+    """
+    Fetch user profile + recent activity from Mongo, build the context dict
+    that your prompt functions expect. Return None if user not found.
+    """
+    user = db.users.find_one({"user_id": user_id})
+    if not user:
+        return None
 
-    #fetch from MongoDB
-    users = mongo.users.find_one({"user_id": user_id})
-    steps = mongo.fitness_events.count_documents({
-        "user_id": user_id,
-        "event_ts": {"$gte": datetime.utcnow() - timedelta(days=7)}
-    })
-    avg_steps = steps / 7
+    # 1) compute age
+    dob       = datetime.fromisoformat(user["date_of_birth"])
+    today     = datetime.now(timezone.utc)
+    age       = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
 
-    ctx = {
-        "age": users["age"],
-        "goal": users.get("goal", "general_fitness"),
-        "height_cm": users["height_cm"],
-        "weight_kg": users["weight_kg_start"],
-        "avg_steps_last_7d": avg_steps,
-        "avg_hr_last_7d": mongo.fitness_events.aggregate([
-            {"$match": {"user_id": user_id}},
-            {"$group": {"_id": None, "avg": {"$avg": "$heart_rate_bpm"}}}
-        ]).next().get("avg", 70),
+    # 2) basic profile
+    height_cm      = user.get("height_cm")
+    weight_kg      = user.get("weight_kg_start")  # or current weight if you store that
+    gender         = user.get("gender", "unspecified")
+    fitness_level  = user.get("fitness_level", "moderate")
+    goal           = user.get("goal", "maintain weight")
+    time_available = user.get("time_available_minutes", 30)
+
+    # 3) average daily steps over last 7 days
+    seven_days_ago = today - timedelta(days=7)
+    pipeline = [
+        {"$match": {
+            "user_id": user_id,
+            "event_ts": {"$gte": seven_days_ago.isoformat()}
+        }},
+        {"$group": {
+            "_id": None,
+            "total_steps": {"$sum": "$step_increment"}
+        }}
+    ]
+    agg = list(db.fitness_events.aggregate(pipeline))
+    total_steps = agg[0]["total_steps"] if agg else 0
+    recent_steps_avg = total_steps / 7
+
+    # 4) optional calorie target (if you’ve stored one)
+    calorie_target = user.get("calorie_target")
+
+    return {
+        "age": int(age),
+        "gender": gender,
+        "height_cm": height_cm,
+        "weight_kg": weight_kg,
+        "fitness_level": fitness_level,
+        "goal": goal,
+        "time_available": time_available,
+        "recent_steps_avg": int(recent_steps_avg),
+        "calorie_target": calorie_target,
     }
-
-    # cache 1 h
-    redis_client.setex(cache_key, 3600, json.dumps(ctx))
-    return ctx
