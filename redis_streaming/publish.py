@@ -9,7 +9,7 @@ import random
 import datetime as dt
 import redis
 
-from generate_fitness_data_return import (
+from redis_streaming.return_generated_fitness_data import (
     generate_users,
     generate_devices,
     make_fitness_event,
