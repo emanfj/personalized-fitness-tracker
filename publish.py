@@ -68,10 +68,11 @@ def fitness_loop():
 
 def sleep_loop():
     user_ids = list(users_df["user_id"])
-    today = dt.datetime.utcnow().date()
+    # use timezone-aware UTC
+    today = dt.datetime.now(dt.timezone.utc).date()
     sleep_done = set()
     while True:
-        now = dt.datetime.utcnow()
+        now = dt.datetime.now(dt.timezone.utc)
         if now.date() != today:
             today = now.date()
             sleep_done.clear()
@@ -84,10 +85,10 @@ def sleep_loop():
 
 def nutrition_loop():
     user_ids = list(users_df["user_id"])
-    today = dt.datetime.utcnow().date()
+    today = dt.datetime.now(dt.timezone.utc).date()
     counts = {u: 0 for u in user_ids}
     while True:
-        now = dt.datetime.utcnow()
+        now = dt.datetime.now(dt.timezone.utc)
         if now.date() != today:
             today = now.date()
             counts = {u: 0 for u in user_ids}
@@ -100,10 +101,10 @@ def nutrition_loop():
 
 def feedback_loop():
     user_ids = list(users_df["user_id"])
-    today = dt.datetime.utcnow().date()
+    today = dt.datetime.now(dt.timezone.utc).date()
     done = set()
     while True:
-        now = dt.datetime.utcnow()
+        now = dt.datetime.now(dt.timezone.utc)
         if now.date() != today:
             today = now.date()
             done.clear()

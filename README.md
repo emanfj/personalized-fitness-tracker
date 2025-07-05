@@ -59,6 +59,10 @@ env MONGO_URL=mongodb://mongo:27017
    ```bash
    docker-compose logs -f publisher storage_writer
    ```
+   for all logs:
+   ```
+   docker compose logs --tail=50
+   ```
 3. **Verify services**
    - Redis: `redis-cli -h localhost -p 6379 PING` ⇒ `PONG`
    - MongoDB: connect with `mongo --host localhost --port 27017` and check `use fitness_tracker`
