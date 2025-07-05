@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   redis:
     image: redis:7
@@ -29,6 +31,11 @@ services:
       - REDIS_PORT=6379
     volumes:
       - .:/app
+    healthcheck:
+      test: ["CMD", "redis-cli", "-h", "redis", "XLEN", "fitness:users"]
+      interval: 2s
+      retries: 5
+      start_period: 5s
 
   storage_writer:
     build:
@@ -38,8 +45,12 @@ services:
     working_dir: /app
     command: python storage_writer.py
     depends_on:
-      - redis
-      - mongo
+      redis:
+        condition: service_started
+      mongo:
+        condition: service_started
+      publisher:
+        condition: service_healthy
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379

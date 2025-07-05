@@ -28,7 +28,7 @@ def test_redis():
         raise
 
 # ─── Mongo config ─────────────────────────────────────────────────────────────
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://127.0.0.1:27017")  # Docker service hostname
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://mongo:27017")  # Docker service hostname
 
 # helper to wait for MongoDB readiness
 def get_mongo_client(uri, retries=10, delay=5):
@@ -46,15 +46,16 @@ def get_mongo_client(uri, retries=10, delay=5):
     print(f"[ERROR] Could not connect to MongoDB at {uri} after {retries} retries")
     raise last_exc
 
-# class for additional DB tests and creation
+# ─── DBTester for initialization ───────────────────────────────────────────────
 class DBTester:
+    """
+    Ensures the fitness_tracker database exists by creating and dropping a temp collection.
+    """
     @staticmethod
     def test_and_create(db_name):
         try:
-            # Ping to confirm connection
             mongo.admin.command("ping")
             print(f"[INFO] MongoDB ping successful.")
-            # Create a temporary collection to force DB creation
             temp_db = mongo.get_database(db_name)
             tmp_coll = f"init_{db_name}"
             if tmp_coll in temp_db.list_collection_names():
@@ -69,22 +70,27 @@ class DBTester:
 
 # establish Mongo connection
 mongo = get_mongo_client(MONGO_URI)
-# force-create the fitness_tracker database
-temp_db = mongo.get_database("fitness_tracker")
-# real DB and collections
-_db = temp_db
-col_users     = _db.users
-col_devices   = _db.devices
-col_fitness   = _db.fitness_events
-col_sleep     = _db.sleep_sessions
-col_nutrition = _db.nutrition_logs
-col_feedback  = _db.feedback_events
+# ensure indexes for faster queries
+db = mongo.fitness_tracker
+col_users = db.users
+col_devices = db.devices
+col_fitness = db.fitness_events
+col_sleep = db.sleep_sessions
+col_nutrition = db.nutrition_logs
+col_feedback = db.feedback_events
 
-# perform initial connectivity tests
-if __name__ == '__main__':
+# create indexes
+col_fitness.create_index([("event_ts", 1)])
+col_fitness.create_index([("activity_type", 1)])
+col_sleep.create_index([("start_ts", 1)])
+col_nutrition.create_index([("log_ts", 1)])
+col_feedback.create_index([("event_ts", 1)])
+
+# perform initial connectivity and initialization tests
+def init_storage():
     test_redis()
     DBTester.test_and_create("fitness_tracker")
-    print("[INFO] Initialization complete. Starting writer threads...")
+    print("[INFO] Storage writer initialized with indexes and connections.")
 
 # ─── helper functions ──────────────────────────────────────────────────────────
 def load_static(stream, coll):
@@ -123,29 +129,36 @@ def fitness_writer():
             fitness_writer.last_flush = now
         time.sleep(1)
 
-# immediate inserts with duplicate-key handling
-def simple_writer(stream, coll, poll_interval=5):
+# immediate inserts with duplicate-key handling; feedback only once/day via poll_interval
+last_feedback_date = None
+
+def simple_writer(stream, coll, poll_interval=5, once_per_day=False):
+    global last_feedback_date
     last_id = "0-0"
     while True:
         resp = r.xread({stream: last_id}, count=100, block=poll_interval * 1000)
         if resp:
             _, entries = resp[0]
+            today = time.strftime('%Y-%m-%d')
             for eid, data in entries:
+                # for feedback, enforce once-per-day
+                if once_per_day:
+                    event_day = data.get("event_ts", '')[:10]
+                    if event_day == last_feedback_date:
+                        last_id = eid
+                        continue
+                    last_feedback_date = event_day
                 data["_id"] = eid
                 try:
                     coll.insert_one(data)
                     print(f"[INFO] Inserted into {coll.name}: {eid}", flush=True)
                 except errors.DuplicateKeyError:
-                    # duplicate _id, skip
                     pass
                 last_id = eid
         time.sleep(poll_interval)
 
-if __name__ != '__main__':
-    # when imported, do nothing
-    pass
-
 if __name__ == '__main__':
+    init_storage()
     # load static streams once
     load_static("fitness:users", col_users)
     load_static("fitness:devices", col_devices)
@@ -154,11 +167,10 @@ if __name__ == '__main__':
         threading.Thread(target=fitness_writer, daemon=True),
         threading.Thread(target=lambda: simple_writer("fitness:sleep", col_sleep), daemon=True),
         threading.Thread(target=lambda: simple_writer("fitness:nutrition", col_nutrition), daemon=True),
-        threading.Thread(target=lambda: simple_writer("fitness:feedback", col_feedback, poll_interval=60), daemon=True),
+        threading.Thread(target=lambda: simple_writer("fitness:feedback", col_feedback, poll_interval=60, once_per_day=True), daemon=True),
     ]
     for t in threads:
         t.start()
     print("[INFO] Storage writer threads started", flush=True)
-    # keep main thread alive
     while True:
         time.sleep(3600)
