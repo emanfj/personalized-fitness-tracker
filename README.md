@@ -129,3 +129,6 @@ docker-compose down -v
 - **UI/UX**: Build a Streamlit or FastAPI frontend that reads Redis hashes for live metrics and Mongo for history.
 - **Production**: Split each service into its own image, add logging, metrics, and deploy on Kubernetes with Secrets and ConfigMaps.
 
+
+
+to run fastapi: uvicorn llm.app:app --reload
