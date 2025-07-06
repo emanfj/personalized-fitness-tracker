@@ -1,149 +1,171 @@
-#!/usr/bin/env python3
-"""
-plan_generator.py — generate personalized workout and nutrition plans
-using local Ollama llama3.2:3b model.
-"""
-
 import os
 import json
+import re
 import requests
+from datetime import datetime
+from typing import Any, List, Optional
 
-# ─── Configuration ─────────────────────────────────────────────────────────────
-OLLAMA_API = os.getenv("OLLAMA_API", "http://127.0.0.1:11435/api/generate")
-DEFAULT_MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
+from pydantic import BaseModel, ValidationError
+from pymongo import MongoClient
 
-# ─── Core LLM Caller ────────────────────────────────────────────────────────────
-def call_llm(prompt: str, model: str = DEFAULT_MODEL) -> str:
-    """
-    Send `prompt` to your local Ollama LLM and return the raw string response.
-    """
-    payload = {
-        "model": model,
+# Configuration
+OLLAMA_API = os.getenv("OLLAMA_API", "http://127.0.0.1:11434/api/generate")
+MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+DB_NAME = "fitness_tracker"
+
+# Data Models
+class Exercise(BaseModel):
+    name: str
+    sets: int
+    reps: Optional[int] = None
+    duration_min: Optional[float] = None
+    rest_sec: Optional[int] = None
+
+class DayPlan(BaseModel):
+    day: int
+    type: str
+    exercises: List[Exercise]
+    total_time: int
+
+# Logging helper
+def log_plan(user_id: Any, plan_type: str, prompt: str, response: str, valid: bool, error: Optional[str] = None):
+    client = MongoClient(MONGO_URI)
+    db = client[DB_NAME]
+    db.plans.insert_one({
+        "user_id": user_id,
+        "type": plan_type,
+        "time": datetime.utcnow(),
         "prompt": prompt,
-        "stream": False,
-        "options": {
-            "temperature": 0.7,
-            "num_ctx": 2048
-        }
-    }
-    resp = requests.post(OLLAMA_API, json=payload)
-    resp.raise_for_status()
-    return resp.json()["response"]
+        "response": response,
+        "valid": valid,
+        "error": error,
+    })
 
-# ─── Prompt Builders ───────────────────────────────────────────────────────────
+# Prompt builders
 def build_workout_prompt(ctx: dict) -> str:
-    """
-    Craft a detailed prompt for generating a 7-day personalized workout plan.
-    """
-    return f"""
-You are a world-class personal trainer. Design a **7-day workout program** tailored to the following user profile:
+    notes = []
+    soreness = ctx.get("recent_soreness")
+    if isinstance(soreness, (int, float)) and soreness >= 3:
+        notes.append("add more rest days")
+    if ctx.get("favorite_activity"):
+        notes.append(f"include {ctx['favorite_activity']}")
+    header = (
+        f"User: age={ctx['age']}, weight={ctx['weight_kg']}, "
+        f"goal={ctx['goal']}, time/day={ctx['time_available']}min, "
+        f"calories={ctx.get('calorie_target')}\n"
+    )
+    body = "\n".join(notes)
+    schema = (
+        "Return only valid JSON (no markdown or extra text). "
+        "Use numeric types: 'day' as int (1=Monday…7=Sunday), 'reps' as int, 'duration_min' as float, 'rest_sec' as int. "
+        "Output a list of 7 items, each with: day, type, exercises (list of {name, sets, reps, duration_min, rest_sec}), total_time."
+    )
+    return header + body + "\n" + schema
 
-User Profile:
-- Age: {ctx['age']} years
-- Gender: {ctx.get('gender', 'unspecified')}
-- Height: {ctx['height_cm']} cm
-- Weight: {ctx['weight_kg']} kg
-- Fitness Level: {ctx['fitness_level']}
-- Primary Goal: {ctx['goal']!r}
-- Available Time per Day: {ctx['time_available']} minutes
-- Average Daily Steps (last 7 days): {ctx['recent_steps_avg']}
-
-Requirements:
-1. For each day (Day 1–7), list:
-    - **Workout Type** (e.g. Upper Body, HIIT, Active Rest)
-    - **Exercises**: name, sets × reps (or duration), rest between sets
-    - **Estimated Total Time** in minutes
-2. Vary intensity and muscle groups to allow recovery.
-3. Include at least one active-recovery or mobility day.
-
-Respond **only** with JSON, using this schema:
-
-```json
-[
-  {{
-    "day": 1,
-    "type": "Upper Body",
-    "exercises": [
-      {{ "name": "Push-ups", "sets": 3, "reps": 12, "rest_sec": 60 }},
-      // ...
-    ],
-    "total_time": 30
-  }},
-  // ...
-]
-```
-""".strip()
 
 def build_nutrition_prompt(ctx: dict) -> str:
-    """
-    Craft a detailed prompt for generating a 3-day personalized meal plan.
-    """
-    return f"""
-You are a registered dietitian. Create a 3-day meal plan (breakfast, lunch, dinner, optional snacks) for the following user:
+    header = (
+        f"User: age={ctx['age']}, weight={ctx['weight_kg']}, "
+        f"goal={ctx['goal']}, calories={ctx.get('calorie_target')}\n"
+    )
+    schema = (
+        "Return only valid JSON (no markdown or extra text). "
+        "Output an object with day1-day3, each containing meals: breakfast, lunch, dinner, snacks optional."
+    )
+    return header + schema
 
-User Profile:
-Age: {ctx['age']} years
-Gender: {ctx.get('gender', 'unspecified')}
-Height: {ctx['height_cm']} cm
-Weight: {ctx['weight_kg']} kg
-Fitness Goal: {ctx['goal']!r}
-Estimated Daily Caloric Needs: {ctx.get('calorie_target', 'calculate based on profile')}
-Activity Level: {ctx['fitness_level']}, ~{ctx['recent_steps_avg']} steps/day
+# LLM call
+def call_llm(prompt: str) -> str:
+    payload = {"model": MODEL, "prompt": prompt, "stream": False}
+    resp = requests.post(OLLAMA_API, json=payload)
+    resp.raise_for_status()
+    return resp.json().get("response", "")
 
-Requirements:
-Provide meals with:
-Dish Name
-Portion Size
-Approximate Calories and Macros (P/C/F)
-Balance macronutrients to support the user’s goal.
-Keep ingredients simple and accessible.
+# Cleanup helper
+def clean_json(raw: str) -> str:
+    raw = raw.strip("`\n")
+    m = re.search(r"(\{.*\}|\[.*\])", raw, re.S)
+    return m.group(1) if m else raw
 
-Respond only with JSON, using this schema:
-```json
-{{
-    "day1": {{ "breakfast": {{}}, "lunch": {{}}, "dinner": {{}}, "snacks": [] }},
-    "day2": {{}},
-    "day3": {{}}
-}}
-```
-""".strip()
+# Normalize LLM output to match schema
+_DAY_MAP = {
+    "monday":1, "tuesday":2, "wednesday":3,
+    "thursday":4, "friday":5, "saturday":6, "sunday":7
+}
 
-def generate_workout_plan(ctx: dict, model: str = DEFAULT_MODEL) -> list:
-    """
-    Generate and parse a 7-day workout plan.
-    """
-    raw = call_llm(build_workout_prompt(ctx), model=model)
+def normalize_workout_data(data: List[dict]) -> List[dict]:
+    normalized = []
+    for day_item in data:
+        # normalize day
+        d = day_item.get('day')
+        if isinstance(d, str):
+            lower = d.strip().lower()
+            if lower in _DAY_MAP:
+                day_item['day'] = _DAY_MAP[lower]
+            else:
+                nums = re.search(r'\d+', d)
+                day_item['day'] = int(nums.group()) if nums else 0
+        # normalize exercises
+        exs = []
+        for ex in day_item.get('exercises', []):
+            name = ex.get('name')
+            sets = ex.get('sets')
+            if isinstance(sets, str) and sets.isdigit():
+                sets = int(sets)
+
+            reps = ex.get('reps')
+            if isinstance(reps, str):
+                m = re.search(r'\d+', reps)
+                reps = int(m.group()) if m else None
+
+            duration = ex.get('duration_min') if ex.get('duration_min') is not None else ex.get('duration')
+            if isinstance(duration, str):
+                m = re.search(r'\d+(?:\.\d+)?', duration)
+                duration = float(m.group()) if m else None
+
+            rest = ex.get('rest_sec')
+            if rest is None and 'rest' in ex:
+                rs = ex.get('rest')
+                if isinstance(rs, str):
+                    m = re.search(r'\d+', rs)
+                    rest = int(m.group()) if m else None
+                else:
+                    rest = rs
+
+            exs.append({
+                'name': name,
+                'sets': sets,
+                'reps': reps,
+                'duration_min': duration,
+                'rest_sec': rest
+            })
+        day_item['exercises'] = exs
+        normalized.append(day_item)
+    return normalized
+
+# Main generator
+def generate_plan(user_id: Any, ctx: dict, plan_type: str) -> Any:
+    prompt = build_workout_prompt(ctx) if plan_type == 'workout' else build_nutrition_prompt(ctx)
+    raw = call_llm(prompt)
+
     try:
-        return json.loads(raw)
+        data = json.loads(raw)
     except json.JSONDecodeError:
-        raise ValueError(f"Failed to parse workout JSON:\n{raw}")
+        cleaned = clean_json(raw)
+        data = json.loads(cleaned)
 
-def generate_nutrition_plan(ctx: dict, model: str = DEFAULT_MODEL) -> dict:
-    """
-    Generate and parse a 3-day meal plan.
-    """
-    raw = call_llm(build_nutrition_prompt(ctx), model=model)
+    if plan_type == 'workout':
+        data = normalize_workout_data(data)
+
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        raise ValueError(f"Failed to parse nutrition JSON:\n{raw}")
+        if plan_type == 'workout':
+            plans = [DayPlan(**item) for item in data]
+        else:
+            plans = data
+        log_plan(user_id, plan_type, prompt, raw, True)
+        return plans
 
-if __name__ == "__main__":
-    example_ctx = {
-        "age": 30,
-        "gender": "Female",
-        "height_cm": 165,
-        "weight_kg": 60,
-        "fitness_level": "intermediate",
-        "goal": "build muscle",
-        "time_available": 45,
-        "recent_steps_avg": 7000,
-        "calorie_target": 2200,
-    }
-    workout_plan = generate_workout_plan(example_ctx)
-    meal_plan = generate_nutrition_plan(example_ctx)
-
-    print(json.dumps({
-        "workout_plan": workout_plan,
-        "meal_plan": meal_plan
-    }, indent=2))
+    except ValidationError as err:
+        log_plan(user_id, plan_type, prompt, raw, False, str(err))
+        raise
