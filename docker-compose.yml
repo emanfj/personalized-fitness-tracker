@@ -57,6 +57,12 @@ services:
     volumes:
       - .:/app
 
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: python agent/agent_service.py
+
 volumes:
   redis-data:
   mongo-data:
