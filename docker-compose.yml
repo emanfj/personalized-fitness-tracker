@@ -7,6 +7,7 @@ services:
       - "6379:6379"
     volumes:
       - redis-data:/data
+    restart: unless-stopped
 
   mongo:
     image: mongo:6
@@ -15,6 +16,7 @@ services:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
+    restart: unless-stopped
 
   publisher:
     build:
@@ -30,6 +32,7 @@ services:
       - REDIS_PORT=6379
     volumes:
       - .:/app
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "-h", "redis", "XLEN", "fitness:users"]
       interval: 2s
@@ -56,12 +59,52 @@ services:
       - MONGO_URI=mongodb://mongo:27017
     volumes:
       - .:/app
+    restart: unless-stopped
 
-  agent:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    command: python agent/agent_service.py
+  # api:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: fastapi
+  #   working_dir: /app
+  #   command: uvicorn llm.app:app --host 0.0.0.0 --port 8000
+  #   depends_on:
+  #     - redis
+  #     - mongo
+  #   environment:
+  #     - REDIS_HOST=redis
+  #     - REDIS_PORT=6379
+  #     - MONGO_URI=mongodb://mongo:27017
+  #     - OLLAMA_API=${OLLAMA_API}
+  #     - OLLAMA_MODEL=${OLLAMA_MODEL}
+  #     - PORT=8000
+  #   ports:
+  #     - "8000:8000"
+  #   volumes:
+  #     - .:/app
+  #   restart: unless-stopped
+
+
+
+  # agent:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: agent
+  #   working_dir: /app/agent
+  #   command: python agent_service.py
+  #   depends_on:
+  #     - redis
+  #     - api
+  #   environment:
+  #     - REDIS_HOST=redis
+  #     - REDIS_PORT=6379
+  #     - RL_MODEL_PATH=models/fitness_agent_ppo.zip
+  #   volumes:
+  #     - .:/app
+  #     - ./agent/models:/app/agent/models
+  #   restart: unless-stopped
+
 
 volumes:
   redis-data:
