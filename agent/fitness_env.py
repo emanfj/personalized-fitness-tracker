@@ -1,73 +1,84 @@
-import gym
-from gym import spaces
+import gymnasium as gym
+from gymnasium import spaces
 import numpy as np
 from redis import Redis
 from collections import deque
 
 class FitnessEnv(gym.Env):
     """
-    A minimal Gym-style wrapper around your Redis streams.
-    State is a 1D float vector of last-N features.
-    Action is a 2D vector: [delta_intensity, delta_duration].
+    Gym-style RL environment for adaptive workout planning.
+    State: window_size x 5 features (buffered)
+    Action: [delta_intensity, delta_duration]
     """
 
     def __init__(self,
-                 redis_host="redis", redis_port=6379,
-                 window_size=30):
+                 redis_host="localhost", redis_port=6379,
+                 window_size=30,
+                 max_episode_steps=100):
         super().__init__()
-        self.redis = Redis(host=redis_host, port=redis_port, decode_responses=True)
+        self.redis = Redis(host=redis_host, port=redis_port, socket_connect_timeout=1, socket_timeout=1,decode_responses=True, )
         self.window_size = window_size
+        self.max_episode_steps = max_episode_steps
 
-        # Example: 5 features (avg_hr, avg_pace, exertion, sleep_quality, nutrition_score)
-        D = 5
-        self.observation_space = spaces.Box(-np.inf, np.inf, shape=(D,), dtype=np.float32)
-        self.action_space      = spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32)
+        self.n_features = 5  # avg_hr, avg_step, exertion, sleep_quality, nutrition_score
+        self.observation_space = spaces.Box(
+            -np.inf, np.inf, shape=(self.window_size * self.n_features,), dtype=np.float32)
+        self.action_space = spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32)
+        self.buffer = deque(maxlen=self.window_size)
+        self.steps = 0
 
-        # rolling buffer for features
-        self.buffer = deque(maxlen=window_size)
-
-    def reset(self):
-        # clear buffer
+    def reset(self, seed=None, **kwargs):
+        if seed is not None:
+            np.random.seed(seed)
         self.buffer.clear()
-        # seed with zeros
-        initial = np.zeros(self.observation_space.shape, dtype=np.float32)
+        initial = np.zeros(self.n_features, dtype=np.float32)
         for _ in range(self.window_size):
             self.buffer.append(initial)
-        return initial
+        self.steps = 0
+        state = np.concatenate(self.buffer)
+        return state, {}
 
     def _fetch_features(self):
-        # pull last window_size events from Redis
-        entries = self.redis.xrevrange("fitness:events", count=self.window_size)
-        # compute simple stats
-        hrs = [float(e[1].get("heart_rate_bpm", 0)) for e in entries]
-        steps = [float(e[1].get("step_increment", 0)) for e in entries]
-        avg_hr = np.mean(hrs) if hrs else 0.0
-        avg_step = np.mean(steps) if steps else 0.0
-        # placeholders for demonstration
-        exertion = float(self.redis.get("latest_exertion") or 0)
-        sleep_q = float(self.redis.get("latest_sleep_quality") or 0)
-        nutri = float(self.redis.get("latest_nutrition_score") or 0)
-        return np.array([avg_hr, avg_step, exertion, sleep_q, nutri], dtype=np.float32)
+        try:
+            entries = self.redis.xrevrange("fitness:events", count=self.window_size)
+            hrs   = [float(e[1].get("heart_rate_bpm", 0)) for e in entries]
+            steps = [float(e[1].get("step_increment", 0)) for e in entries]
+            avg_hr   = np.mean(hrs) if hrs else 0.0
+            avg_step = np.mean(steps) if steps else 0.0
+            exertion = float(self.redis.get("latest_exertion") or 0)
+            sleep_q  = float(self.redis.get("latest_sleep_quality") or 0)
+            nutri    = float(self.redis.get("latest_nutrition_score") or 0)
+            return np.array([avg_hr, avg_step, exertion, sleep_q, nutri], dtype=np.float32)
+        except Exception as e:
+            print(f"Error fetching features from Redis: {e}")
+            return np.zeros(self.n_features, dtype=np.float32)
 
     def step(self, action):
-        """
-        action: [delta_intensity, delta_duration]
-        We simulate the effect by publishing a plan update, then reading new features.
-        Reward is negative L2 of action (encourage small changes) for this prototype.
-        """
-        # publish to plan_updates
-        delta_intensity, delta_duration = action.tolist()
-        self.redis.xadd("plan_updates", {
-            "delta_intensity": str(delta_intensity),
-            "delta_duration":  str(delta_duration),
-        })
+        # Publish action
+        try:
+            delta_intensity, delta_duration = action.tolist()
+            self.redis.xadd("plan_updates", {
+                "delta_intensity": str(delta_intensity),
+                "delta_duration":  str(delta_duration),
+            })
+        except Exception as e:
+            print(f"Error publishing to Redis: {e}")
 
-        # get next observation
         obs = self._fetch_features()
         self.buffer.append(obs)
-        state = np.stack(self.buffer).mean(axis=0)
+        state = np.concatenate(self.buffer)
 
-        # dummy reward
-        reward = -np.linalg.norm(action)  
-        done = False
-        return state, reward, done, {}
+        # Reward: small for adjustment, +ve for improved exertion/sleep, -ve for over adjustment
+        prev = np.array(self.buffer[-2]) if len(self.buffer) > 1 else np.zeros(self.n_features)
+        improvement = obs[2] - prev[2] + obs[3] - prev[3]  # exertion + sleep_quality improvement
+        reward = (
+            -0.5 * np.linalg.norm(action) +  # discourage big changes
+            0.2 * improvement  # encourage good health feedback
+        )
+
+        self.steps += 1
+        terminated = self.steps >= self.max_episode_steps
+        truncated = False
+        info = {}
+
+        return state, reward, terminated, truncated, info
