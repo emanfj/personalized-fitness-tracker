@@ -1,26 +1,24 @@
 import os
-import time
-import numpy as np
-from redis import Redis
 from stable_baselines3 import PPO
 from fitness_env import FitnessEnv
 
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
-MODEL_PATH = os.getenv("RL_MODEL_PATH", "models/fitness_agent_ppo.zip")
-
 def main():
-    redis = Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
-    # load RL policy
-    model = PPO.load(MODEL_PATH, device="cpu")
-    env   = FitnessEnv(redis_host=REDIS_HOST, redis_port=REDIS_PORT)
-    obs   = env.reset()
+    redis_host = os.getenv("REDIS_HOST", "localhost")
+    redis_port = int(os.getenv("REDIS_PORT", 6379))
+    window_size = int(os.getenv("WINDOW_SIZE", 30))
+    max_episode_steps = int(os.getenv("MAX_EPISODE_STEPS", 100))
 
-    while True:
-        action, _ = model.predict(obs, deterministic=True)
-        obs, reward, done, info = env.step(action)
-        # wait a bit between decisions
-        time.sleep(10)
+    env = FitnessEnv(redis_host=redis_host, redis_port=redis_port,
+                     window_size=window_size, max_episode_steps=max_episode_steps)
+    
+    model = PPO("MlpPolicy", env, verbose=1, tensorboard_log="./logs", 
+            policy_kwargs=None)
+    model.learn(total_timesteps=200_000, tb_log_name="ppo_fitness")
+    os.makedirs("models", exist_ok=True)
+    model.save("models/fitness_agent_ppo")
+    print("Training completed and model saved!")
 
 if __name__ == "__main__":
     main()
+
+# once training starts: tensorboard --logdir=logs
