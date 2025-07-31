@@ -8,13 +8,11 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, ValidationError
 from pymongo import MongoClient
 
-# Configuration
 OLLAMA_API = os.getenv("OLLAMA_API", "http://127.0.0.1:11434/api/generate")
 MODEL = os.getenv("OLLAMA_MODEL", "llama3.2:latest")
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
 DB_NAME = "fitness_tracker"
 
-# Data Models
 class Exercise(BaseModel):
     name: str
     sets: int
@@ -28,7 +26,6 @@ class DayPlan(BaseModel):
     exercises: List[Exercise]
     total_time: int
 
-# Logging helper
 def log_plan(user_id: Any, plan_type: str, prompt: str, response: str, valid: bool, error: Optional[str] = None):
     client = MongoClient(MONGO_URI)
     db = client[DB_NAME]
@@ -42,7 +39,6 @@ def log_plan(user_id: Any, plan_type: str, prompt: str, response: str, valid: bo
         "error": error,
     })
 
-# Prompt builders
 def build_workout_prompt(ctx: dict) -> str:
     notes = []
     soreness = ctx.get("recent_soreness")
@@ -71,24 +67,23 @@ def build_nutrition_prompt(ctx: dict) -> str:
     )
     schema = (
         "Return only valid JSON (no markdown or extra text). "
-        "Output an object with day1-day3, each containing meals: breakfast, lunch, dinner, snacks optional."
+        "Output an object with day1-day3, each containing food listed for each meal: breakfast, lunch, dinner. Snacks can be optionally generated." \
+        "Do not leave any meals empty, and ensure each meal has at least one item. "
+        "Each item should have: name, calories, protein, carbs, fat."
     )
     return header + schema
 
-# LLM call
 def call_llm(prompt: str) -> str:
     payload = {"model": MODEL, "prompt": prompt, "stream": False}
     resp = requests.post(OLLAMA_API, json=payload)
     resp.raise_for_status()
     return resp.json().get("response", "")
 
-# Cleanup helper
 def clean_json(raw: str) -> str:
     raw = raw.strip("`\n")
     m = re.search(r"(\{.*\}|\[.*\])", raw, re.S)
     return m.group(1) if m else raw
 
-# Normalize LLM output to match schema
 _DAY_MAP = {
     "monday":1, "tuesday":2, "wednesday":3,
     "thursday":4, "friday":5, "saturday":6, "sunday":7
@@ -144,10 +139,10 @@ def normalize_workout_data(data: List[dict]) -> List[dict]:
         normalized.append(day_item)
     return normalized
 
-# Main generator
 def generate_plan(user_id: Any, ctx: dict, plan_type: str) -> Any:
     prompt = build_workout_prompt(ctx) if plan_type == 'workout' else build_nutrition_prompt(ctx)
     raw = call_llm(prompt)
+    
 
     try:
         data = json.loads(raw)
