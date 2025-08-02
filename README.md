@@ -1,323 +1,407 @@
 # Personalized Fitness Tracker
 
-## 1. Project Overview
+[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://python.org)
+[![Docker](https://img.shields.io/badge/Docker-Compose-blue.svg)](https://docker.com)
+[![MongoDB](https://img.shields.io/badge/MongoDB-6.0-green.svg)](https://mongodb.com)
+[![Redis](https://img.shields.io/badge/Redis-7.0-red.svg)](https://redis.io)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.68+-green.svg)](https://fastapi.tiangolo.com)
 
+An end-to-end AI-powered fitness tracking system that generates synthetic wearable data, provides personalized recommendations through LLM integration, trains reinforcement learning agents for adaptive workout planning, and delivers comprehensive analytics reports.
 
-This repository implements an end-to-end real-time pipeline that generates, streams, and stores synthetic fitness data, ready for ai/ml and analytics.
+## 🎯 Project Overview
 
-## introduction
+This system simulates a complete wearable-to-insights pipeline featuring:
 
-this project simulates a wearable-to-database workflow using docker, redis streams, and mongodb. it publishes user profiles, devices, workout events, sleep sessions, nutrition logs, and daily feedback into redis streams, then writes them into mongodb collections. the resulting data lake powers recommendation engines, adaptive agents, and fitness analytics.
+- **Real-time data streaming** via Redis Streams
+- **Scalable data storage** with MongoDB
+- **AI-powered recommendations** using LLM integration  
+- **Adaptive workout planning** with PPO reinforcement learning
+- **Comprehensive analytics** with automated HTML reports
+- **RESTful API** for client integration
 
-## prerequisites
+## 🏗️ Architecture
 
-- docker & docker compose (v2+)  
-- optional: python 3.8+ & pip (for local runs)  
-- at least 8 gb ram for local development  
-
-
-## architecture overview
-
-1. **publisher**  
-   - multi-threaded python service that generates synthetic data and XADDs into six redis streams  
-2. **storage_writer**  
-   - python service that XREADs from redis, upserts users/devices, bulk-inserts fitness events, and writes other streams to mongodb  
-3. **redis**  
-   - message broker for streams (image: redis:7)  
-4. **mongodb**  
-   - persistent storage for collections under `fitness_tracker` (image: mongo:6)  
-
-all services run in containers and communicate over the default compose network.
-
-## data pipeline
-
-### redis streams
-
-- `fitness:users`  
-- `fitness:devices`  
-- `fitness:events`  
-- `fitness:sleep`  
-- `fitness:nutrition`  
-- `fitness:feedback`
-
-### publisher.py
-
-on startup publishes static streams once:
-```python
-fitness:users → {
-  user_id, user_name, email, date_of_birth, age,
-  height_cm, weight_kg_start, resting_hr_baseline,
-  max_hr_estimate, goal_type, dietary_preference, signup_ts
-}
-fitness:devices → {
-  device_id, user_id, device_type, model,
-  first_seen_ts, last_seen_ts
-}
-then in parallel threads emits:
-fitness:events → {
-  event_id, user_id, device_id, activity_type,
-  duration_s, distance_m, pace_s_per_km,
-  heart_rate_bpm, hr_variability, spo2_pct,
-  respiration_rate, skin_temp_c, gsr_us,
-  calories_burned, step_increment, indoor,
-  gps_lat, gps_lon, event_ts
-}
-
-fitness:sleep → {
-  session_id, user_id, device_id, start_ts,
-  end_ts, quality, sleep_stage_breakdown, awakenings
-}
-
-fitness:nutrition → {
-  log_id, user_id, meal_type, calories,
-  protein_g, carbs_g, fat_g, water_ml, log_ts
-}
-
-fitness:feedback → {
-  feedback_id, user_id, event_ts, mood,
-  energy, perceived_exertion, soreness_level
-}
-# one event per user per day at 23:59 UTC
-storage_writer.py
-on startup:
-
-waits for redis & mongo readiness
-
-creates/drops a temp collection to force the fitness_tracker DB
-
-loads static streams (fitness:users, fitness:devices) via XREAD into db.users and db.devices
-
-then spawns threads:
-
-buffers 5000 fitness:events or 60 s windows → bulk-inserts into db.fitness_events
-
-simple writers for
-
-fitness:sleep → db.sleep_sessions
-
-fitness:nutrition → db.nutrition_logs
-
-fitness:feedback → db.feedback_events (once-per-day enforced)
-
-creates indexes on key fields (event_ts, activity_type, start_ts, log_ts) for fast queries.
-
-usage
-from the project root (where docker-compose.yml lives):
-```
-docker compose up --build -d
-docker compose logs -f publisher storage_writer
-```
-to stop and remove containers and volumes:
-```
-docker compose down -v
-```
-AI/ML Engineering
-this layer provides a lightweight REST api backed by an llm and mongodb for generating personalized workout and nutrition plans, and collecting user feedback.
-
-components
-app.py
-fastapi application defining routes, error handling, and mongodb interactions
-
-plan_generator.py
-prompt builders, llm call logic, json cleanup, data normalization, pydantic models, logging
-
-user_context.py
-builds user context from the database
-
-features
-generate 7-day workout plans via GET /workout/{user_id}
-
-generate 3-day meal plans via GET /nutrition/{user_id}
-
-collect user feedback via POST /feedback/{user_id}
-
-view history of past plans via GET /plans/{user_id}/history
-requirements
-python 3.10+
-
-mongodb instance (local or remote)
-
-ollama llm server (or compatible http endpoint)
-
-installation
-```
-pip install -r requirements.txt
-```
-environment variables
-OLLAMA_API (e.g. http://127.0.0.1:11434/api/generate)
-
-OLLAMA_MODEL (default llama3.2:latest)
-
-MONGO_URI (default mongodb://localhost:27017)
-
-PORT (optional, default 8000)
-
-running the server
-```
-uvicorn app:app --reload --host 0.0.0.0 --port ${PORT:-8000}
-```
-api endpoints
-GET /
-health check
-
-Response
-
-json
-Copy
-Edit
-{ "msg": "AI Fitness & Nutrition API up." }
-GET /workout/{user_id}
-7-day workout plan
-
-GET /nutrition/{user_id}
-3-day meal plan
-
-POST /feedback/{user_id}
-record feedback event
-
-GET /plans/{user_id}/history
-retrieve last 10 plans
-
-data flow
-user context fetched from mongodb
-
-plan_generator builds prompt and calls llm
-
-raw json cleaned & validated
-
-plans saved in plans collection
-
-feedback stored in feedback_events
-
-contributing
-pull requests welcome. run tests with pytest and update this readme.
-
-<old below>
-- **Publisher**: Generates and publishes synthetic fitness data (users, devices, fitness events, sleep sessions, nutrition logs, feedback events) to Redis streams.
-- **Storage Writer**: Tails Redis streams and writes data into MongoDB collections, with batching for high‑volume streams and one‑off writes for low‑volume streams.
-- **(Optional) Reader**: A simple script to tail and display streams for debugging.
-
-A `data/` folder contains static exports of previous runs in CSV and Parquet format for direct ingestion or reference:
-
-```
-data/
-├── devices.csv
-├── feedback_events.csv
-├── fitness_events.parquet
-├── nutrition_logs.csv
-├── sleep_sessions.csv
-└── users.csv
+```mermaid
+graph TB
+    A[Synthetic Data Publisher] --> B[Redis Streams]
+    B --> C[Storage Writer]
+    C --> D[MongoDB]
+    D --> E[AI/ML Services]
+    E --> F[FastAPI Backend]
+    F --> G[Analytics Pipeline]
+    G --> H[HTML Reports]
+    
+    subgraph "AI/ML Layer"
+        I[LLM Recommendations]
+        J[PPO Agent Training]
+        K[User Context Analysis]
+    end
+    
+    E --> I
+    E --> J  
+    E --> K
 ```
 
-## 2. Prerequisites
+### Core Components
+
+1. **Data Pipeline**
+   - **Publisher**: Multi-threaded synthetic data generation
+   - **Storage Writer**: Redis → MongoDB with intelligent batching
+   - **Redis Streams**: Real-time message broker
+   - **MongoDB**: Persistent data lake
+
+2. **AI/ML Services**
+   - **LLM Integration**: Personalized workout/nutrition plans via Ollama
+   - **PPO Agent**: Reinforcement learning for adaptive recommendations
+   - **Context Engine**: User behavior analysis and profiling
+
+3. **Analytics & Reporting**
+   - **Weekly Reports**: Automated HTML dashboards
+   - **Performance Metrics**: Cross-stream data analysis
+   - **Health Insights**: Rule-based recommendation engine
+
+## 🚀 Quick Start
+
+### Prerequisites
 
 - Docker & Docker Compose (v2+)
-- (Optional) Python 3.8+ and `pip` if you want to run scripts locally
-- 8 GB RAM (for local development)
+- Python 3.8+ (optional, for local development)
+- 8 GB RAM minimum
+- Ollama server (for LLM features)
 
-## 3. Directory Structure
+### Installation
 
-```
-├── data/                         # Static exports (CSV & Parquet)
-├── publish.py                    # Multi-threaded Redis publisher
-├── storage_writer.py             # Redis → MongoDB writer
-├── redis_reader_testing.py       # (Optional) Stream tailing script
-├── requirements.txt              # Python dependencies
-├── Dockerfile                    # Base image for all Python services
-└── docker-compose.yml            # Defines Redis, Mongo, publisher, writer services
-```
-
-## 4. Configuration
-
-- The default Redis host/port and MongoDB URL are configured in the scripts (`localhost:6379`, `mongodb://localhost:27017`).
-- To change, update the `environment` section in `docker-compose.yml` or set environment variables in your shell for local runs:
-
-```bash
-env REDIS_HOST=redis
-env REDIS_PORT=6379
-env MONGO_URL=mongodb://mongo:27017
-```
-
-## 5. Running with Docker Compose
-
-1. **Build & start services**
+1. **Clone the repository**
    ```bash
-   docker-compose up --build -d
+   git clone <repository-url>
+   cd personalized-fitness-tracker
    ```
-2. **View logs**
+
+2. **Start the core infrastructure**
    ```bash
-   docker-compose logs -f publisher storage_writer
+   docker compose up --build -d
    ```
-   for all logs:
-   ```
-   docker compose logs --tail=50
-   ```
+
 3. **Verify services**
-   - Redis: `redis-cli -h localhost -p 6379 PING` ⇒ `PONG`
-   - MongoDB: connect with `mongo --host localhost --port 27017` and check `use fitness_tracker`
-
-## 6. Initial Load of Static Exports
-
-If you wish to bulk-load the existing CSV/Parquet exports into MongoDB (bypassing the Redis streams):
-
-1. Install dependencies and start a Python REPL:
    ```bash
-   pip install pandas pyarrow pymongo
-   python
-   ```
-2. Run:
-   ```python
-   import pandas as pd
-   from pymongo import MongoClient
-
-   client = MongoClient("mongodb://localhost:27017")
-   db = client.fitness_tracker
-
-   # Load users
-   df = pd.read_csv('data/users.csv')
-   df.to_dict('records') and db.users.insert_many(...)
-
-   # Similarly for devices, sleep_sessions, nutrition_logs, feedback_events
-
-   # For Parquet:
-   df = pd.read_parquet('data/fitness_events.parquet')
-   db.fitness_events.insert_many(df.to_dict('records'))
+   # Check Redis
+   docker exec -it redis redis-cli ping
+   
+   # Check MongoDB
+   docker exec -it mongo mongosh --eval "db.adminCommand('ismaster')"
+   
+   # View logs
+   docker compose logs -f publisher storage_writer
    ```
 
-## 7. Running the Optional Reader
+4. **Launch AI/ML services**
+   ```bash
+   # Start FastAPI backend
+   uvicorn llm.app:app --reload --host 0.0.0.0 --port 8000
+   
+   # Train PPO agent (optional)
+   docker compose --profile training run --rm trainer
+   ```
 
-For debugging or live monitoring:
+## 📊 Data Pipeline
+
+### Redis Streams
+
+The system generates and processes six primary data streams:
+
+- **`fitness:users`** - User profiles and demographics
+- **`fitness:devices`** - Wearable device information  
+- **`fitness:events`** - Workout activities with biometrics
+- **`fitness:sleep`** - Sleep session quality and patterns
+- **`fitness:nutrition`** - Meal logging and caloric intake
+- **`fitness:feedback`** - Daily mood and energy ratings
+
+### Data Schema
+
+#### Fitness Events
+```json
+{
+  "event_id": "uuid",
+  "user_id": "uuid", 
+  "device_id": "uuid",
+  "activity_type": "running|cycling|strength",
+  "duration_s": 1800,
+  "heart_rate_bpm": 145,
+  "calories_burned": 320,
+  "step_increment": 2500,
+  "event_ts": "2025-07-28T14:30:00Z"
+}
+```
+
+#### Sleep Sessions  
+```json
+{
+  "session_id": "uuid",
+  "user_id": "uuid",
+  "start_ts": "2025-07-27T23:00:00Z",
+  "end_ts": "2025-07-28T07:00:00Z", 
+  "quality": 0.85,
+  "sleep_stage_breakdown": {...},
+  "awakenings": 2
+}
+```
+
+## 🤖 AI/ML Features
+
+### LLM-Powered Recommendations
+
+**Endpoints:**
+- `GET /workout/{user_id}` - 7-day personalized workout plan
+- `GET /nutrition/{user_id}` - 3-day meal recommendations  
+- `POST /feedback/{user_id}` - Collect user feedback
+- `GET /plans/{user_id}/history` - Historical plan archive
+
+**Configuration:**
+```bash
+export OLLAMA_API=http://127.0.0.1:11434/api/generate
+export OLLAMA_MODEL=llama3.2:latest
+export MONGO_URI=mongodb://localhost:27017
+```
+
+### PPO Reinforcement Learning Agent
+
+**Training Pipeline:**
+```bash
+#start training
+python train_agent.py
+
+#monitor with TensorBoard  
+tensorboard --logdir tensorboard_logs --port 6006
+```
+
+**Key Hyperparameters:**
+- **Learning Rate**: 3e-4 → 0 (linear decay)
+- **Clip Range**: 0.1
+- **Batch Size**: 1024 (4096 steps / 4 envs)
+- **Gamma**: 0.995
+- **GAE Lambda**: 0.98
+
+**Environment Details:**
+- **Observation Space**: 30-step rolling window × 5 features
+- **Action Space**: 2D continuous (intensity_delta, duration_delta)
+- **Reward Function**: Health improvement vs. adjustment smoothness
+
+## 📈 Analytics & Reporting
+
+### Weekly Report Generation
+
+Generate comprehensive HTML reports for individual users:
 
 ```bash
+python -m analysis.run_analysis --user_id <user-uuid>
+```
+
+**Report Features:**
+- 📊 **Interactive Dashboard** with metric cards
+- 📅 **Weekly Trend Analysis** across all data streams  
+- 🎯 **Personalized Recommendations** via rule-based engine
+- 📱 **Mobile-Responsive Design** with modern styling
+- 💡 **Health Insights** with color-coded priorities
+
+### Python Analysis Libraries
+
+**Core Dependencies:**
+- **pandas** - Time series resampling and aggregation
+- **pymongo** - MongoDB integration with aggregation pipelines
+- **pathlib** - Modern file system operations
+- **datetime** - Timestamp processing
+
+**Key Algorithms:**
+- **Weekly Resampling**: `df.resample("W").agg(functions)`
+- **Multi-Stream Fusion**: Temporal alignment with outer joins
+- **Missing Data Handling**: Graceful empty DataFrame processing
+- **Rule-Based Recommendations**: Multi-criteria health assessment
+
+## 🛠️ Development
+
+### Local Development Setup
+
+1. **Install Python dependencies**
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+2. **Start infrastructure only**
+   ```bash
+   docker compose up redis mongo -d
+   ```
+
+3. **Run services locally**
+   ```bash
+   # Publisher
+   python publish.py
+   
+   # Storage Writer  
+   python storage_writer.py
+   
+   # FastAPI Backend
+   uvicorn llm.app:app --reload
+   ```
+
+### Project Structure
+
+```
+personalized-fitness-tracker/
+├── data/                     # Static CSV/Parquet exports
+├── analysis/                 # Analytics and reporting
+│   ├── data_load.py         # MongoDB → DataFrame utilities
+│   ├── user_report.py       # Weekly report generation  
+│   └── run_analysis.py      # CLI interface
+├── llm/                     # AI/ML services
+│   ├── app.py              # FastAPI application
+│   ├── plan_generator.py   # LLM integration
+│   └── user_context.py     # Context building
+├── agent/                   # Reinforcement learning
+│   ├── train_agent.py      # PPO training pipeline
+│   └── fitness_env.py      # Custom Gym environment
+├── publish.py              # Synthetic data publisher
+├── storage_writer.py       # Redis → MongoDB writer
+├── docker-compose.yml      # Infrastructure definition
+└── requirements.txt        # Python dependencies
+```
+
+### Environment Variables
+
+```bash
+# Redis Configuration
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+# MongoDB Configuration  
+MONGO_URI=mongodb://localhost:27017
+
+# LLM Configuration
+OLLAMA_API=http://127.0.0.1:11434/api/generate
+OLLAMA_MODEL=llama3.2:latest
+
+# API Configuration
+PORT=8000
+```
+
+## 📚 API Documentation
+
+### Health Check
+```bash
+curl http://localhost:8000/
+# Response: {"msg": "AI Fitness & Nutrition API up."}
+```
+
+### Generate Workout Plan
+```bash
+curl http://localhost:8000/workout/550e8400-e29b-41d4-a716-446655440000
+```
+
+### Submit Feedback
+```bash
+curl -X POST http://localhost:8000/feedback/550e8400-e29b-41d4-a716-446655440000 \
+  -H "Content-Type: application/json" \
+  -d '{"energy": 4, "mood": 5, "perceived_exertion": 3}'
+```
+
+## 🔧 Configuration & Tuning
+
+### PPO Training Parameters
+
+**Current Configuration:**
+```python
+hyperparameters = {
+    "n_steps": 4096,
+    "batch_size": 1024, 
+    "gamma": 0.995,
+    "gae_lambda": 0.98,
+    "learning_rate": 3e-4,  #linear decay to 0
+    "clip_range": 0.1,
+    "ent_coef": 0.01,
+    "vf_coef": 0.5
+}
+```
+
+**Training Progress:**
+- **Episode Reward**: -5.5 → -0.06 (7M timesteps)
+- **Policy Loss**: Stable near zero
+- **Value Loss**: Decreasing trend
+- **Explained Variance**: 0.4 → 0.52
+
+### Recommendation Engine Rules
+
+```python
+# Workout frequency
+if workout_count < 3:
+    recommend("Increase workout frequency to ≥3 per week")
+
+# Sleep quality  
+if sleep_quality < 0.7:
+    recommend("Improve sleep hygiene and wind-down routine")
+
+# Activity level
+if daily_steps < 5000:
+    recommend("Add walking sessions to reach step goals")
+```
+
+## 🚦 Monitoring & Observability
+
+### Service Health Checks
+
+```bash
+# Redis connectivity
+redis-cli -h localhost -p 6379 ping
+
+# MongoDB status
+mongosh --host localhost:27017 --eval "db.adminCommand('ping')"
+
+# Stream monitoring
 python redis_reader_testing.py
 ```
 
-## 8. Verifying Data in MongoDB
+## 🔄 Deployment & Scaling
 
-1. **Mongo Shell**
-   ```bash
-   mongo --host localhost --port 27017
-   > use fitness_tracker
-   > db.fitness_events.count()
-   > db.users.findOne()
-   ```
-2. **MongoDB Compass**: connect to `mongodb://localhost:27017` and inspect collections.
-
-## 9. Stopping & Cleaning Up
+### Docker Compose Production
 
 ```bash
-docker-compose down
-# to remove volumes (data):
-docker-compose down -v
+# Production deployment
+docker compose -f docker-compose.prod.yml up -d
+
+# Scale storage writers
+docker compose up --scale storage_writer=3 -d
+
+# Monitor resource usage
+docker stats
 ```
 
-## 10. Next Steps & Integration
+## 🤝 Contributing
 
-- **ML/LLM**: Tail `fitness_events` and `sleep_sessions` streams to compute real-time features in a new container.
-- **Analytics**: Schedule daily jobs (e.g., with Airflow) to aggregate `fitness_events` into summary tables.
-- **UI/UX**: Build a Streamlit or FastAPI frontend that reads Redis hashes for live metrics and Mongo for history.
-- **Production**: Split each service into its own image, add logging, metrics, and deploy on Kubernetes with Secrets and ConfigMaps.
+1. **Fork the repository**
+2. **Create a feature branch**: `git checkout -b feature/amazing-feature`
+3. **Make your changes** and add tests
+4. **Run the test suite**: `pytest`
+5. **Commit your changes**: `git commit -m 'Add amazing feature'`
+6. **Push to the branch**: `git push origin feature/amazing-feature`
+7. **Open a Pull Request**
 
+### Development Guidelines
 
+- Follow PEP 8 style guidelines
+- Add type hints for new functions
+- Include docstrings for public APIs
+- Write unit tests for core functionality
+- Update documentation for new features
 
-to run fastapi: uvicorn llm.app:app --reload
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🙏 Acknowledgments
+
+- **Stable Baselines3** for reinforcement learning framework
+- **FastAPI** for high-performance API development
+- **MongoDB** for flexible document storage
+- **Redis** for real-time data streaming
+- **Ollama** for local LLM deployment
+
+---
+
