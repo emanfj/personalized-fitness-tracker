@@ -341,7 +341,7 @@ if daily_steps < 5000:
     recommend("Add walking sessions to reach step goals")
 ```
 
-## 🚦 Monitoring & Observability
+## Monitoring & Observability
 
 ### Service Health Checks
 
