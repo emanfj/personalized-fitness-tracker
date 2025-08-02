@@ -8,7 +8,7 @@
 
 An end-to-end AI-powered fitness tracking system that generates synthetic wearable data, provides personalized recommendations through LLM integration, trains reinforcement learning agents for adaptive workout planning, and delivers comprehensive analytics reports.
 
-## 🎯 Project Overview
+## Project Overview
 
 This system simulates a complete wearable-to-insights pipeline featuring:
 
@@ -19,7 +19,7 @@ This system simulates a complete wearable-to-insights pipeline featuring:
 - **Comprehensive analytics** with automated HTML reports
 - **RESTful API** for client integration
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 graph TB
@@ -60,7 +60,7 @@ graph TB
    - **Performance Metrics**: Cross-stream data analysis
    - **Health Insights**: Rule-based recommendation engine
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -146,7 +146,7 @@ The system generates and processes six primary data streams:
 }
 ```
 
-## 🤖 AI/ML Features
+## AI/ML Features
 
 ### LLM-Powered Recommendations
 
@@ -186,7 +186,7 @@ tensorboard --logdir tensorboard_logs --port 6006
 - **Action Space**: 2D continuous (intensity_delta, duration_delta)
 - **Reward Function**: Health improvement vs. adjustment smoothness
 
-## 📈 Analytics & Reporting
+## Analytics & Reporting
 
 ### Weekly Report Generation
 
@@ -197,11 +197,9 @@ python -m analysis.run_analysis --user_id <user-uuid>
 ```
 
 **Report Features:**
-- 📊 **Interactive Dashboard** with metric cards
-- 📅 **Weekly Trend Analysis** across all data streams  
-- 🎯 **Personalized Recommendations** via rule-based engine
-- 📱 **Mobile-Responsive Design** with modern styling
-- 💡 **Health Insights** with color-coded priorities
+- **Weekly Trend Analysis** across all data streams  
+- **Personalized Recommendations** via rule-based engine
+- **Health Insights** with color-coded priorities
 
 ### Python Analysis Libraries
 
@@ -217,7 +215,7 @@ python -m analysis.run_analysis --user_id <user-uuid>
 - **Missing Data Handling**: Graceful empty DataFrame processing
 - **Rule-Based Recommendations**: Multi-criteria health assessment
 
-## 🛠️ Development
+## Development
 
 ### Local Development Setup
 
@@ -303,7 +301,7 @@ curl -X POST http://localhost:8000/feedback/550e8400-e29b-41d4-a716-446655440000
   -d '{"energy": 4, "mood": 5, "perceived_exertion": 3}'
 ```
 
-## 🔧 Configuration & Tuning
+## Configuration & Tuning
 
 ### PPO Training Parameters
 
@@ -373,7 +371,7 @@ docker compose up --scale storage_writer=3 -d
 docker stats
 ```
 
-## 🤝 Contributing
+## Contributing
 
 1. **Fork the repository**
 2. **Create a feature branch**: `git checkout -b feature/amazing-feature`
@@ -395,7 +393,7 @@ docker stats
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **Stable Baselines3** for reinforcement learning framework
 - **FastAPI** for high-performance API development
