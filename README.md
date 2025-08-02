@@ -281,7 +281,7 @@ OLLAMA_MODEL=llama3.2:latest
 PORT=8000
 ```
 
-## 📚 API Documentation
+## API Documentation
 
 ### Health Check
 ```bash
@@ -356,7 +356,7 @@ mongosh --host localhost:27017 --eval "db.adminCommand('ping')"
 python redis_reader_testing.py
 ```
 
-## 🔄 Deployment & Scaling
+## Deployment & Scaling
 
 ### Docker Compose Production
 
@@ -389,7 +389,7 @@ docker stats
 - Write unit tests for core functionality
 - Update documentation for new features
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
