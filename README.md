@@ -103,7 +103,7 @@ graph TB
    docker compose --profile training run --rm trainer
    ```
 
-## 📊 Data Pipeline
+## Data Pipeline
 
 ### Redis Streams
 
